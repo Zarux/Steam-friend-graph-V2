@@ -1,0 +1,30 @@
+{
+  "dependencies": {
+    "express": "^4.15.4",
+    "material-ui": "^0.19.0",
+    "material-ui-icons": "^1.0.0-beta.5",
+    "react": "^15.6.1",
+    "react-dom": "^15.6.1",
+    "react-redux": "^5.0.6",
+    "react-router": "^4.2.0",
+    "react-router-dom": "^4.2.2",
+    "react-sigma": "^1.2.26",
+    "react-tap-event-plugin": "^2.0.1",
+    "redux": "^3.7.2",
+    "socket.io": "^2.0.3",
+    "steamidconvert": "^0.2.4",
+    "webpack": "^3.5.5"
+  },
+  "scripts": {
+    "start": "webpack-dev-server --config app/webpack.config.js"
+  },
+  "devDependencies": {
+    "babel-core": "^6.26.0",
+    "babel-loader": "^7.1.2",
+    "babel-preset-es2017": "^6.24.1",
+    "babel-preset-react": "^6.24.1",
+    "babel-preset-stage-2": "^6.24.1",
+    "json-loader": "^0.5.7",
+    "webpack-dev-server": "^2.7.1"
+  }
+}
