@@ -4,12 +4,15 @@ import json
 import math
 import os
 import time
-
 import MySQLdb
 import requests
-
 from cfg import Config
-import threading
+from itertools import zip_longest
+
+
+def grouper(iterable, n, fill_value=None):
+    args = [iter(iterable)] * n
+    return zip_longest(*args, fillvalue=fill_value)
 
 
 def debug(obj):
@@ -32,7 +35,7 @@ class SteamFriendData:
         self.depth = depth
         self.error_profiles = set()
         self.config = Config()
-        self.profiles = {str(user): {"root": True, "personaname": "", "friends": []}}
+        self.profiles = {str(user): {"personaname": "", "friends": []}}
         self.db = MySQLdb.connect(
             host=self.config.db_host,
             user=self.config.db_user,
@@ -166,7 +169,7 @@ class SteamFriendDataDB:
         self.user = user
         self.depth = depth
         self.config = Config()
-        self.profiles[str(user)] = {"root": True, "personaname": "", "friends": []}
+        self.profiles[str(user)] = {"personaname": "", "friends": []}
         self.db = MySQLdb.connect(
             host=self.config.db_host,
             user=self.config.db_user,
@@ -207,6 +210,8 @@ class SteamFriendDataDB:
                 self.checked_ids.add(str(row[0]))
         users = list(set(users).difference(self.checked_ids))
         for user in users:
+            if not user:
+                continue
             self.c.crawl(user, depth=1)
             self.checked_ids.add(str(user))
         return True
@@ -227,15 +232,18 @@ class SteamFriendDataDB:
 
         if not hasattr(steam64_ids, '__iter__'):
             steam64_ids = [steam64_ids]
+        complete_data = []
+        for ids in grouper(steam64_ids, 500):
+            true_ids = [i for i in ids if i is not None]
+            query = ("SELECT id as steamid, personaname, realname, timecreated, loccountrycode, community_id "
+                     "FROM Profiles "
+                     "WHERE id in ({})").format(','.join(['%s'] * len(true_ids)))
+            with self.db.cursor(MySQLdb.cursors.DictCursor) as cursor:
+                cursor.execute(query, true_ids)
+                data = cursor.fetchall()
+            complete_data.extend(data)
 
-        query = ("SELECT id as steamid, personaname, realname, timecreated, loccountrycode, community_id "
-                 "FROM Profiles "
-                 "WHERE id in ({})").format(','.join(['%s'] * len(steam64_ids)))
-        with self.db.cursor(MySQLdb.cursors.DictCursor) as cursor:
-            cursor.execute(query, steam64_ids)
-            data = cursor.fetchall()
-
-        for row in data:
+        for row in complete_data:
             if not self.profiles[str(row["steamid"])]["personaname"]:
                 profile = self.profiles[str(row["steamid"])]
                 for field in fields:
@@ -250,21 +258,25 @@ class SteamFriendDataDB:
         self.info_from_steam64_id(nameless)
 
     def fetch_friends(self, profiles):
+        complete_data = []
+        for profile in grouper(profiles, 500):
+            true_profiles = [i for i in profile if i is not None]
             query = ("SELECT any_value(id_profile), "
                      "GROUP_CONCAT(CONCAT(CAST(id_friend AS char),'_',CAST(friend_since AS char))) "
                      "FROM Friends "
                      "WHERE id_profile in ({}) "
-                     "GROUP BY id_profile").format(','.join(["%s"] * len(profiles)))
+                     "GROUP BY id_profile").format(','.join(["%s"] * len(true_profiles)))
             with self.db.cursor() as cursor:
-                cursor.execute(query, profiles)
+                cursor.execute(query, true_profiles)
                 data = cursor.fetchall()
+            complete_data.extend(data)
 
-            for row in data:
-                for friend in row[1].split(","):
-                    steamid, friend_since = friend.split("_")
-                    self.profiles[str(row[0])]["friends"].append((steamid, friend_since))
-                    if steamid not in self.profiles:
-                        self.profiles[steamid] = {"personaname": "", "friends": []}
+        for row in complete_data:
+            for friend in row[1].split(","):
+                steamid, friend_since = friend.split("_")
+                self.profiles[str(row[0])]["friends"].append((steamid, friend_since))
+                if steamid not in self.profiles:
+                    self.profiles[steamid] = {"personaname": "", "friends": []}
 
     def mass_fetch_friends(self):
         friendless = [p for p in self.profiles if len(self.profiles[p]["friends"]) == 0]

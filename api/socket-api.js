@@ -16,7 +16,7 @@ io.sockets.on('connection', (socket) => {
     };
 
     const getSteamId = (id, cb) => {
-        const is_64 = !isNaN(id) && id.toString().indexOf("765611") === 0;
+        const is_64 = !isNaN(id) && id.toString().indexOf("765611") === 0 && id.toString().length === 17;
 
         if(is_64){
             cb(null, id);
@@ -27,6 +27,7 @@ io.sockets.on('connection', (socket) => {
             })
         }
     };
+
 
     socket.on("get-steamid", data => {
         getSteamId(data.id, (err, id) => {
@@ -40,11 +41,14 @@ io.sockets.on('connection', (socket) => {
     });
 
 
-    const runScript = (user, command) => {
+    const runScript = (user, command, depth=1) => {
         const options = {
             mode: 'json',
-            args: ['--user', user, '--print', '--depth', 1]
+            pythonOptions: ['-W', 'ignore'],
+            args: ['--user', user, '--print', '--depth', depth]
+
         };
+
         console.log(command, "Running", GENERATOR_FILE, ...options.args);
 
         PythonShell.run(GENERATOR_FILE, options, (err, res) => {
@@ -66,7 +70,7 @@ io.sockets.on('connection', (socket) => {
                 }else if(e.message){
 
                 }else{
-                    socket.emit(`${command}:return`, {graph: e});
+                    socket.emit(`${command}:return`, {graph: e, user: user});
                     return false;
                 }
             });

@@ -1,10 +1,14 @@
 import time
 from multiprocessing import Queue
-
 import MySQLdb
-
 from cfg import Config
 from fetch_steam_data import SteamFriendData, debug
+from itertools import zip_longest
+
+
+def grouper(iterable, n, fill_value=None):
+    args = [iter(iterable)] * n
+    return zip_longest(*args, fillvalue=fill_value)
 
 
 class Crawler:
@@ -31,35 +35,76 @@ class Crawler:
 
     def db_insert(self, data):
         db = self.db
+        big_query = (
+            "INSERT INTO Profiles("
+            "id, personaname, realname, timecreated, loccountrycode, "
+            "locstatecode, loccityid, last_checked, community_id, communityvisibilitystate, error_cnt)"
+            "VALUES {values} "
+            "ON DUPLICATE KEY UPDATE "
+            "personaname = VALUES(personaname), realname = VALUES(realname), "
+            "timecreated = VALUES(timecreated), loccountrycode = VALUES (loccountrycode), "
+            "locstatecode = VALUES(locstatecode), loccityid = VALUES(loccityid), "
+            "last_checked = unix_timestamp(), community_id = VALUES (community_id), "
+            "communityvisibilitystate = VALUES(communityvisibilitystate), error_cnt = error_cnt + VALUES(error_cnt)"
+        )
 
-        for steam_id, profile in data.profiles.items():
-            query = (
-                "INSERT INTO Profiles("
-                "id, personaname, realname, timecreated, loccountrycode, "
-                "locstatecode, loccityid, last_checked, community_id, communityvisibilitystate, error_cnt)"
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, unix_timestamp(), %s, %s, %s) "
-                "ON DUPLICATE KEY UPDATE "
-                "personaname = VALUES(personaname), realname = VALUES(realname), "
-                "timecreated = VALUES(timecreated), loccountrycode = VALUES (loccountrycode), "
-                "locstatecode = VALUES(locstatecode), loccityid = VALUES(loccityid), "
-                "last_checked = unix_timestamp(), community_id = VALUES (community_id), "
-                "communityvisibilitystate = VALUES(communityvisibilitystate), error_cnt = error_cnt + VALUES(error_cnt)"
-            )
+        for profile_set in grouper(data.profiles.items(), 500, (None, None)):
+            profile_values = []
+            big_params = []
+            friend_profiles = []
+
+            if not profile_set:
+                continue
+            for steam_id, profile in profile_set:
+                if not steam_id or not profile:
+                    continue
+                if profile["friends"]:
+                    friend_profiles.append(steam_id)
+                    query = (
+                        "DELETE From Friends WHERE id_profile = %s AND id_friend NOT IN ({})"
+                    ).format(",".join(['%s'] * len(profile["friends"])))
+                    with db.cursor() as cursor:
+                        try:
+                            cursor.execute(query, (steam_id, *[f[0] for f in profile["friends"]]))
+                        except MySQLdb.Error as e:
+                            print(str(e))
+                            print(cursor._last_executed)
+                            exit(1)
+
+                    query = "INSERT INTO Friends(id_profile, id_friend, friend_since) VALUES"
+                    params = []
+                    for friend, friend_since in profile["friends"]:
+                        query += "(%s, %s, %s), "
+                        params += [steam_id, friend, friend_since]
+                    query = query.strip(', ')
+                    query += " ON DUPLICATE KEY UPDATE friend_since=friend_since"
+                    with db.cursor() as cursor:
+                        try:
+                            cursor.execute(query, params)
+                        except MySQLdb.Error as e:
+                            print(str(e))
+                            print(cursor._last_executed)
+                            exit(1)
+                        else:
+                            db.commit()
+                profile_values.append('({})'.format(",".join(["%s"] * 11)))
+                big_params.extend((
+                    steam_id,
+                    profile["personaname"],
+                    profile.get("realname"),
+                    profile.get("timecreated"),
+                    profile.get("loccountrycode"),
+                    profile.get("locstatecode"),
+                    profile.get("loccityid"),
+                    int(time.time()),
+                    str(profile.get("community_id")),
+                    profile.get("communityvisibilitystate"),
+                    1 if steam_id in data.error_profiles else 0
+                ))
 
             with db.cursor() as cursor:
                 try:
-                    cursor.execute(query, (
-                        steam_id,
-                        profile["personaname"],
-                        profile.get("realname"),
-                        profile.get("timecreated"),
-                        profile.get("loccountrycode"),
-                        profile.get("locstatecode"),
-                        profile.get("loccityid"),
-                        str(profile.get("community_id")),
-                        profile.get("communityvisibilitystate"),
-                        1 if steam_id in data.error_profiles else 0
-                    ))
+                    cursor.execute(big_query.format(values=",".join(profile_values)), big_params)
                 except MySQLdb.Error as e:
                     print(str(e))
                     print(cursor._last_executed)
@@ -68,54 +113,33 @@ class Crawler:
                     pass
                 else:
                     db.commit()
-
-            if profile["friends"]:
-                query = "UPDATE Profiles SET last_checked_friends = unix_timestamp(), error_cnt = 0 WHERE id = %s"
+            if friend_profiles:
+                query = (
+                    "UPDATE Profiles SET last_checked_friends = unix_timestamp(), error_cnt = 0 WHERE id in ({})"
+                ).format(",".join(["%s"] * len(friend_profiles)))
                 with db.cursor() as cursor:
                     try:
-                        cursor.execute(query, (steam_id, ))
+                        cursor.execute(query, friend_profiles)
                     except MySQLdb.Error as e:
                         print(str(e))
                         print(cursor._last_executed)
                         exit(1)
 
-                query = "DELETE From Friends WHERE id_profile = %s"
-                with db.cursor() as cursor:
-                    try:
-                        cursor.execute(query, (steam_id, ))
-                    except MySQLdb.Error as e:
-                        print(str(e))
-                        print(cursor._last_executed)
-                        exit(1)
-
-                query = "INSERT INTO Friends(id_profile, id_friend, friend_since) VALUES"
-                params = []
-                for friend, friend_since in profile["friends"]:
-                    query += "(%s, %s, %s), "
-                    params += [steam_id, friend, friend_since]
-                query = query.strip(', ')
-                query += " ON DUPLICATE KEY UPDATE friend_since=friend_since"
-                with db.cursor() as cursor:
-                    try:
-                        cursor.execute(query, params)
-                    except MySQLdb.Error as e:
-                        print(str(e))
-                        print(cursor._last_executed)
-                        exit(1)
-                    else:
-                        db.commit()
-
-        db.commit()
+            db.commit()
 
     def crawl(self, user, depth=0):
-        data = SteamFriendData(user, depth=depth)
+        try:
+            data = SteamFriendData(user, depth=depth)
+        except:
+            self.crawl(user)
+            return
         if self.verbose:
             print("Got data for", user, len(data.profiles))
         self.total_calls_made += data.calls_made
         self.db_insert(data)
         if self.verbose:
             print("Calls made now/total", data.calls_made, self.total_calls_made)
-        if self.total_calls_made >= 90000:
+        if self.total_calls_made >= 50000:
             exit(0)
 
     def get_next_users(self):
@@ -135,7 +159,7 @@ class Crawler:
         for row in data:
             if self.verbose:
                 print(row[1])
-            self.crawl(row[0])
+            self.crawl(row[0], depth=1)
 
         if self.total_calls_made >= 99000:
             if self.verbose:
@@ -146,4 +170,4 @@ class Crawler:
 if __name__ == '__main__':
     c = Crawler(verbose=True)
     c.get_next_users()
-    #c.crawl(76561198137331965, depth=1)
+    #c.crawl(76561198022211564, depth=0)

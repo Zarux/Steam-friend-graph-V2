@@ -16,8 +16,8 @@ export default class Graph extends Component {
                     width: "100%"
                 }}
             >
-                <Header/>
-                <GraphArea id={this.props.match.params.id}/>
+                <Header id={this.props.match.params.id}/>
+                <GraphArea/>
             </div>
         )
     }
