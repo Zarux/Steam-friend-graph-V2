@@ -7,17 +7,19 @@ import store from '../../store'
 
 class GraphArea extends Component {
 
-    duration_multiplier = 10;
+    duration_multiplier = 8;
 
     constructor(props) {
         super(props);
 
         socket.on("get-graph:return", data => {
+
             this.setState({
                 ...this.state,
                 isDataFetched: true,
                 graph: data.graph,
                 root_id: data.user,
+                selectedNode: data.user
             });
             this.props.updateRender(true);
         });
@@ -26,12 +28,30 @@ class GraphArea extends Component {
             isDataFetched: false,
             graph : {},
             completed: 0,
-            root_id: ""
+            root_id: "",
+            selectedNode: "",
+            nodeInfo: {}
         };
     }
 
+    handleNodeClicked = (node) => {
+        const trueNode = node.data.node;
+        this.setState({
+            ...this.state,
+            selectedNode: {
+                personaname: trueNode.personaname,
+                realname: trueNode.realname,
+                loccountrycode: trueNode.loccountrycode,
+                friends: trueNode.friends,
+                communityid: trueNode.communityid,
+                steamid: trueNode.steamid
+            }
+        })
+    };
+
     render(){
-        const minDegree = parseInt(this.props.getMinDegree());
+        const minDegree = parseInt(this.props.getSetting().minDegree);
+        console.log(this.props.getSetting().markRoot);
         if(!this.state.isDataFetched || !this.props.getRender()) return null;
 
         return (
@@ -41,6 +61,23 @@ class GraphArea extends Component {
                     width: "100%"
                 }}
             >
+                <div
+                    style={{
+                        display: 'none',
+                        border: "1px solid black",
+                        float: "left",
+                        height: "25%",
+                        width: "15%",
+                        position: "fixed",
+                        marginTop: "5px",
+                        backgroundColor: "ivory"
+                    }}
+                >
+                    Name: {this.state.selectedNode.realname} <br />
+                    Alias: {this.state.selectedNode.personaname} <br />
+                    Country: {this.state.selectedNode.loccountrycode} <br />
+
+                </div>
                 <Sigma
                     renderer="webgl"
                     style={{
@@ -73,15 +110,16 @@ class GraphArea extends Component {
                     <ForceAtlas2
                         barnesHutOptimize
                         worker
-                        gravity={1}
-                        scalingRatio={1.5}
-                        iterationsPerRender={parseInt(Math.ceil(this.state.graph.nodes.length / 30000))}
+                        gravity={parseInt(Math.ceil(this.state.graph.nodes.length / 10000)) + 1}
+                        iterationsPerRender={2 ** (parseInt(Math.ceil(this.state.graph.nodes.length / 3000)))}
                         timeout={this.state.graph.nodes.length * this.duration_multiplier}
                     />
                     <SigmaColors
                         wait={this.duration_multiplier * this.state.graph.nodes.length}
                         root={this.state.root_id}
+                        markRoot={this.props.getSetting().markRoot}
                     />
+                    <SigmaEvents handleNodeClicked={this.handleNodeClicked}/>
                 </Sigma>
 
             </div>
@@ -89,12 +127,37 @@ class GraphArea extends Component {
     }
 }
 
+class SigmaEvents extends React.Component {
+
+    constructor(props){
+        super(props);
+        this.s = props.sigma;
+        this.s.bind('clickNode', this.props.handleNodeClicked)
+    }
+
+    render(){
+        return null
+    }
+}
+
 class SigmaColors extends React.Component {
 
     colorTimer = null;
+    rootSize = null;
 
     componentWillUnmount(){
         clearInterval(this.colorTimer);
+    }
+
+    componentDidUpdate(){
+        console.log(this.props.markRoot);
+        if(this.props.markRoot && this.props.root){
+            this.s.graph.nodes(this.props.root).size = this.rootSize + 3;
+        }else{
+            this.s.graph.nodes(this.props.root).size = this.rootSize;
+        }
+        this.calculateColors();
+        this.s.refresh()
     }
 
     constructor(props){
@@ -105,13 +168,16 @@ class SigmaColors extends React.Component {
         this.s.cameras[0].goTo({ x: 0, y: 0, angle: 0, ratio: 2 });
         this.s.settings({
             edgeColor: 'default',
-            defaultEdgeColor: 'rgba(20, 30, 50, 0)'
+            defaultEdgeColor: 'rgba(30, 30, 30, 0)'
         });
 
         this.props.sigma.graph.nodes().forEach(n => {
             n.x = Math.random() * 3;
             n.y = Math.random();
         });
+
+        this.rootSize = this.s.graph.nodes(this.props.root).size;
+
         this.calculateColors();
 
         this.colorTimer = setInterval(() => {
@@ -124,26 +190,32 @@ class SigmaColors extends React.Component {
     }
 
     calculateColors(){
-        let xFactor, yFactor;
-        let xLowest, yLowest, xHighest, yHighest;
-        let nodesX, nodesY;
+        let xFactor, yFactor;//, zFactor;
+        let xLowest, yLowest, xHighest, yHighest;//, zLowest, zHighest;
+        let nodesX, nodesY;//, nodesZ;
 
         nodesX = this.s.graph.nodes().map((node)=>{return node.x});
         nodesY = this.s.graph.nodes().map((node)=>{return node.y});
+        //nodesZ = this.s.graph.nodes().map((node)=>{return this.s.graph.degree(node.id)});
         xLowest = Math.min(-1, Math.min(...nodesX));
         xHighest = Math.max(...nodesX);
         yLowest = Math.min(-1, Math.min(...nodesY));
         yHighest = Math.max(...nodesY);
+        //zLowest = Math.min(...nodesZ);
+        //zHighest = Math.min(Math.max(...nodesZ), 20);
+
         xFactor = 255 / (xHighest + Math.abs(xLowest));
         yFactor = 255 / (yHighest + Math.abs(yLowest));
+        //zFactor = 70 / zHighest;
 
         this.s.graph.nodes().forEach(node => {
             let r,g,b;
-            b = Math.max(parseInt((node.x + Math.abs(xLowest)) * xFactor), 50);
-            g = Math.max(parseInt((node.y + Math.abs(yLowest)) * yFactor), 50);
-            r = 20;
-            if(node.part_of_path){
-                node.size = node.size + 5;
+            let z = Math.min(20, this.s.graph.degree(node.id));
+            g = Math.max(parseInt((node.x + Math.abs(xLowest)) * xFactor), 100);
+            b = Math.max(parseInt((node.y + Math.abs(yLowest)) * yFactor), 100);
+            r = 0;
+            //r = Math.max(parseInt(z * zFactor), 10);
+            if(this.props.markRoot && node.id === this.props.root){
                 node.color = `rgb(${255}, ${g}, ${b})`;
             }else{
                 node.color = `rgb(${r}, ${g}, ${b})`;
@@ -157,8 +229,8 @@ class SigmaColors extends React.Component {
 }
 
 const mapStateToProps = state => ({
-    getMinDegree(){
-        return state.setting.minDegree
+    getSetting(){
+        return state.setting
     },
     getSteamId(){
         return state.state.steamid

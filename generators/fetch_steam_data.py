@@ -221,7 +221,6 @@ class SteamFriendDataDB:
         fields = (
             'steamid',
             'personaname',
-            'profileurl',
             'realname',
             'timecreated',
             'loccountrycode',

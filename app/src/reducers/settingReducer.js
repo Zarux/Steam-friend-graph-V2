@@ -1,9 +1,11 @@
 const SET_MIN_DEGREE = 'SET_MIN_DEGREE';
 const SET_HIDE_EDGES ='SET_HIDE_EDGES';
+const TOGGLE_MARK_ROOT ='TOGGLE_MARK_ROOT';
 
 const initialState = {
-    minDegree: 1,
-    hideEdges: false
+    minDegree: 2,
+    hideEdges: false,
+    markRoot: false
 };
 
 export default function settingReducer(state=initialState, action){
@@ -11,13 +13,18 @@ export default function settingReducer(state=initialState, action){
     switch(action.type){
         case SET_MIN_DEGREE:
             return {
+                ...state,
                 minDegree: action.minDegree,
-                hideEdges: state.hideEdges
             };
         case SET_HIDE_EDGES:
             return {
-                minDegree: state.minDegree,
+                ...state,
                 hideEdges: action.hideEdges
+            };
+        case TOGGLE_MARK_ROOT:
+            return {
+                ...state,
+                markRoot: !state.markRoot
             };
 
         default:

@@ -1,8 +1,9 @@
 html, body {
     height: 100%;
     width: 100%;
-    background: #272727;
+    background: #676767;
     overflow: hidden;
+    font-family: 'Roboto', sans-serif;
 }
 
 #app{
