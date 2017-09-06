@@ -19,16 +19,11 @@ def debug(obj):
     print(json.dumps(obj, sort_keys=True, indent=4))
 
 
-class SteamFriendData:
+class SteamFriend:
     API_BASE = "http://api.steampowered.com/ISteamUser/"
     FRIEND_API = "{api_base}GetFriendList/v0001/?key={api_key}&steamid={steam_id}&relationship=friend"
     USER_API = "{api_base}GetPlayerSummaries/v0002/?key={api_key}&steamids={steam_id}"
     profiles = {}
-    futures = []
-    depth = 1
-    max_threads = os.cpu_count() * 100
-    calls_made = 0
-    error_profiles = set()
 
     def __init__(self, user, depth=1):
         self.user = user
@@ -42,12 +37,26 @@ class SteamFriendData:
             passwd=self.config.db_pw,
             db=self.config.db
         )
+
+
+class SteamFriendData(SteamFriend):
+
+    futures = []
+    depth = 1
+    max_threads = os.cpu_count() * 100
+    calls_made = 0
+    error_profiles = set()
+
+    def __init__(self, user, depth=1):
+        super().__init__(user, depth)
+
+        self.error_profiles = set()
+
         self.calls_made = 0
         self.fetch_friends([str(user)])
         for _ in range(self.depth):
             self.mass_fetch_friends()
         self.fetch_profile_info()
-        # self.update_401()
         # debug(self.profiles)
 
     def info_from_steam64_id(self, steam64_ids):
@@ -136,18 +145,8 @@ class SteamFriendData:
         ]
         concurrent.futures.wait(futures)
 
-    def update_401(self):
-        query = (
-            "UPDATE Profiles "
-            "SET error_cnt = error_cnt + 1 "
-            "WHERE id in ({})").format(",".join(["%s"] * len(self.error_profiles)))
-        print(list(map(str, self.error_profiles)))
-        print(query)
-        with self.db.cursor() as cursor:
-            cursor.execute(query, list(map(str, self.error_profiles)))
 
-
-class SteamFriendDataDB:
+class SteamFriendDataDB(SteamFriend):
     profiles = {}
     depth = 1
     checked_ids = set()
@@ -164,21 +163,13 @@ class SteamFriendDataDB:
             self.times[s] = time.time()
 
     def __init__(self, user, depth=1):
+        super().__init__(user, depth)
         from crawler import Crawler
         self.c = Crawler(verbose=False)
-        self.user = user
-        self.depth = depth
-        self.config = Config()
-        self.profiles[str(user)] = {"personaname": "", "friends": []}
-        self.db = MySQLdb.connect(
-            host=self.config.db_host,
-            user=self.config.db_user,
-            passwd=self.config.db_pw,
-            db=self.config.db
-        )
         self.check_db([user])
         self.calls_made = 0
         self.fetch_friends([str(user)])
+        self.check_db([f[0] for f in self.profiles[user]["friends"]])
         for _ in range(int(self.depth)):
             self.mass_fetch_friends()
         self.fetch_profile_info()
@@ -186,11 +177,12 @@ class SteamFriendDataDB:
 
     def check_db(self, users):
         users = list(set(users).difference(self.checked_ids))
+        error_users = set()
         if not users:
             return True
         query = ("SELECT any_value(Profiles.id), any_value(communityvisibilitystate), id_profile, any_value(error_cnt) "
                  "FROM Profiles LEFT JOIN Friends ON Profiles.id = id_profile "
-                 "WHERE Profiles.id in ({}) GROUP BY id_profile").format(",".join(["%s"] * len(users)))
+                 "WHERE Profiles.id in ({}) GROUP BY id_profile, Profiles.id").format(",".join(["%s"] * len(users)))
         with self.db.cursor() as cursor:
             try:
                 cursor.execute(query, users)
@@ -199,20 +191,24 @@ class SteamFriendDataDB:
                 print(cursor._last_executed)
                 exit(1)
             data = cursor.fetchall()
+
         for row in data:
-            if row[2] == 3 and row[3] is None and row[4] < 2:
+            if row[3] >= 2:
+                error_users.add(str(row[0]))
+            if row[1] == 3 and row[2] is None and row[3] < 2:
                 if not self.warning_printed:
-                    print(json.dumps({"message": "crawling"}))
+                    print(json.dumps({"message": "crawling %s" % row[3]}))
                     self.warning_printed = True
-                self.c.crawl(row[0], depth=1)
+                self.c.crawl(row[0], depth=0)
                 self.checked_ids.add(str(row[0]))
             else:
                 self.checked_ids.add(str(row[0]))
         users = list(set(users).difference(self.checked_ids))
         for user in users:
-            if not user:
+            if not user or user in error_users:
                 continue
-            self.c.crawl(user, depth=1)
+            print(json.dumps({"message": "crawling %s" % user}))
+            self.c.crawl(user, depth=0)
             self.checked_ids.add(str(user))
         return True
 
@@ -286,6 +282,5 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('-u', '--user')
     args = parser.parse_args()
-    tmp_steam64_id = 76561198022211564
-    # tmp_steam64_id = 76561198017924701
+    tmp_steam64_id = '76561198022211564'
     sfg = SteamFriendDataDB(tmp_steam64_id, depth=1)
