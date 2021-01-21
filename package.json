@@ -12,7 +12,7 @@
     "react-sigma": "^1.2.26",
     "react-tap-event-plugin": "^2.0.1",
     "redux": "^3.7.2",
-    "socket.io": "^2.0.3",
+    "socket.io": "^2.4.0",
     "steamidconvert": "^0.2.4",
     "webpack": "^3.5.5"
   },
